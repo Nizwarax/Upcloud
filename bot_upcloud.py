@@ -44,6 +44,7 @@ TRX_COUNTER_FILE = f"{DIR_PATH}/transaction_counter.txt"
 BOT_CONFIG = f"{DIR_PATH}/bot_config.sh"
 SOLD_DB = f"{DIR_PATH}/sold_log.json"
 ADMIN_DB = f"{DIR_PATH}/admins.json"
+USER_INFO_DB = f"{DIR_PATH}/user_info.json"
 
 # --- Helper to locate QRIS image ---
 def get_qris_image_path():
@@ -93,7 +94,10 @@ logger = logging.getLogger(__name__)
     SET_QRIS_INPUT,
     ADD_ADMIN_INPUT,
     SET_ADMIN_CONTACT_INPUT,
-) = range(13)
+    SET_STORE_NAME_INPUT,
+    SET_MANAGED_BY_INPUT,
+    RESTORE_DB_INPUT,
+) = range(16)
 
 # --- Helper Functions ---
 
@@ -192,12 +196,26 @@ def is_admin(user_id):
 def check_is_admin_role(user_id):
     return is_admin(user_id)
 
-def register_member(user_id):
+def register_member(user, user_id=None):
     if not os.path.exists(MEMBER_DB): save_json(MEMBER_DB, [])
     members = load_json(MEMBER_DB, [])
-    if user_id not in members:
-        members.append(user_id)
+
+    uid = str(user.id) if hasattr(user, 'id') else str(user)
+    if uid not in members:
+        members.append(uid)
         save_json(MEMBER_DB, members)
+
+    if hasattr(user, 'id'):
+        users_info = load_json(USER_INFO_DB, {})
+        first_name = user.first_name or ""
+        last_name = f" {user.last_name}" if user.last_name else ""
+        full_name = f"{first_name}{last_name}".strip() or "No Name"
+        username = f"@{user.username}" if user.username else "(No Username)"
+        users_info[uid] = {
+            "name": full_name,
+            "username": username
+        }
+        save_json(USER_INFO_DB, users_info)
 
 # --- HARGA ---
 def get_account_price():
@@ -223,6 +241,33 @@ def set_admin_contact(contact):
     data = load_json(SETTINGS_DB, {})
     if not isinstance(data, dict): data = {}
     data["admin_contact"] = contact.strip()
+    save_json(SETTINGS_DB, data)
+
+def get_store_name():
+    data = load_json(SETTINGS_DB, {})
+    if isinstance(data, dict) and data.get("store_name"):
+        return data["store_name"]
+    return "UPCLOUD STORE"
+
+def set_store_name(name):
+    data = load_json(SETTINGS_DB, {})
+    if not isinstance(data, dict): data = {}
+    data["store_name"] = name.strip()
+    save_json(SETTINGS_DB, data)
+
+def get_managed_by():
+    data = load_json(SETTINGS_DB, {})
+    if isinstance(data, dict) and data.get("managed_by"):
+        return data["managed_by"]
+    contact = get_admin_contact()
+    if contact:
+        return contact if contact.startswith("@") else (f"@{contact.split('/')[-1]}" if "t.me/" in contact else contact)
+    return "Deki_niswara"
+
+def set_managed_by(managed_by):
+    data = load_json(SETTINGS_DB, {})
+    if not isinstance(data, dict): data = {}
+    data["managed_by"] = managed_by.strip()
     save_json(SETTINGS_DB, data)
 
 def set_account_price(price):
@@ -402,7 +447,7 @@ async def send_log_to_channel(context, user_data, akun, price, role_user, remain
 
 # --- MAIN MENU ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE, force_new=False):
-    register_member(update.effective_user.id)
+    register_member(update.effective_user)
     user = update.effective_user
     user_id = str(user.id)
     safe_username = f"@{user.username}" if user.username else html.escape(user.first_name)
@@ -442,12 +487,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE, force_new=Fa
 
     admin_contact = get_admin_contact() or "@Admin"
     admin_display = admin_contact if admin_contact.startswith("@") else (f"@{admin_contact.split('/')[-1]}" if "t.me/" in admin_contact else admin_contact)
+    store_name = get_store_name()
+    managed_by = get_managed_by()
 
     text = (
         f"📦━━━━━━━━━━━━━━━━━━━📦\n"
-        f"      ✨ <b>UPCLOUD STORE</b> ✨\n"
+        f"      ✨ <b>{html.escape(store_name.upper())}</b> ✨\n"
         f"📦━━━━━━━━━━━━━━━━━━━📦\n\n"
-        f"selamat datang di UPCloud Auto Store 💎\n"
+        f"selamat datang di {html.escape(store_name)} 💎\n"
         f"nikmati pengalaman membeli akun upcloud tercepat, aman, dan otomatis 🚀\n\n"
         f"🧭 <b>informasi akun</b>\n"
         f"┏━━━━━━━━━━━━━━━━━━━━━┓\n"
@@ -479,7 +526,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE, force_new=Fa
         f"☎️ <b>hubungi admin</b>\n"
         f"╰📨 {admin_display}\n\n"
         f"📦━━━━━━━━━━━━━━━━━━━📦\n"
-        f"     🌐 dikelola oleh <i>{html.escape(admin_display)}</i>\n"
+        f"     🌐 dikelola oleh <i>{html.escape(managed_by)}</i>\n"
         f"📦━━━━━━━━━━━━━━━━━━━📦"
     )
 
@@ -489,8 +536,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE, force_new=Fa
     ]
     if is_admin(user_id):
         buttons.append([InlineKeyboardButton("📦 Kelola Stok", callback_data='menu_stock_manage')])
-        buttons.append([InlineKeyboardButton("👥 Manage Resellers & Saldo", callback_data='menu_resellers')])
-        buttons.append([InlineKeyboardButton("📢 Broadcast", callback_data='menu_broadcast'), InlineKeyboardButton("💾 Backup Data", callback_data='menu_backup')])
+        buttons.append([InlineKeyboardButton("👥 Manage Resellers & Store", callback_data='menu_resellers')])
+        buttons.append([InlineKeyboardButton("📢 Broadcast", callback_data='menu_broadcast'), InlineKeyboardButton("💾 Backup Data", callback_data='menu_backup'), InlineKeyboardButton("📥 Restore Data", callback_data='menu_restore')])
         buttons.append([InlineKeyboardButton("📈 Laporan Pendapatan", callback_data='menu_income')])
 
     reply_markup = InlineKeyboardMarkup(buttons)
@@ -780,10 +827,14 @@ async def reseller_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("⛔ Hanya admin!")
         return SELECTING_ACTION
     admin_contact = get_admin_contact() or "Belum diset"
+    store_name = get_store_name()
+    managed_by = get_managed_by()
     text = (
-        "👥 <b>MANAGE RESELLERS & SALDO</b>\n\n"
-        f"📩 Kontak Admin Saat Ini: <code>{admin_contact}</code>\n"
-        "Kelola member, reseller, saldo, harga akun, QRIS, dan kontak admin."
+        "👥 <b>MANAGE RESELLERS & STORE</b>\n\n"
+        f"🏪 Nama Store: <code>{html.escape(store_name)}</code>\n"
+        f"👤 Dikelola Oleh: <code>{html.escape(managed_by)}</code>\n"
+        f"📩 Kontak Admin: <code>{html.escape(admin_contact)}</code>\n\n"
+        "Kelola member, reseller, saldo, harga akun, QRIS, dan kustomisasi store."
     )
     buttons = [
         [InlineKeyboardButton("➕ Tambah Reseller", callback_data='reseller_add'), InlineKeyboardButton("➖ Hapus Reseller", callback_data='reseller_del')],
@@ -792,6 +843,7 @@ async def reseller_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🏷️ Set Harga Member", callback_data='reseller_set_price'), InlineKeyboardButton("🏷️ Set Harga Reseller", callback_data='reseller_set_reseller_price')],
         [InlineKeyboardButton("👑 Daftar Admin", callback_data='admin_list'), InlineKeyboardButton("➕ Tambah Admin", callback_data='admin_add')],
         [InlineKeyboardButton("🖼️ Set Foto QRIS", callback_data='menu_set_qris'), InlineKeyboardButton("💬 Set Kontak Admin", callback_data='menu_set_contact')],
+        [InlineKeyboardButton("🏪 Set Nama Store", callback_data='menu_set_store_name'), InlineKeyboardButton("👤 Set Dikelola Oleh", callback_data='menu_set_managed_by')],
         [InlineKeyboardButton("🔙 Menu Utama", callback_data='menu_back')]
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
@@ -800,26 +852,92 @@ async def reseller_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def action_list_resellers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    resellers = load_resellers_data()
-    msg = f"📋 <b>Daftar Member & Saldo ({len(resellers)})</b>\n\n"
-    if not resellers: msg += "Belum ada data."
-    else:
-        sorted_ids = sorted(resellers.keys(), key=lambda x: resellers[x].get('balance', 0), reverse=True)
-        for r_id in sorted_ids[:50]:
-            data = resellers[r_id]
-            balance = format_rupiah(data.get('balance', 0))
-            role_type = data.get('role', 'member')
-            role_tag = "👑 Admin" if role_type == 'admin' else ("🏆 Reseller" if role_type == 'reseller' else "👤 Member")
+    resellers_data = load_resellers_data()
+    all_members = load_json(MEMBER_DB, [])
+    users_info = load_json(USER_INFO_DB, {})
+
+    combined_ids = set(resellers_data.keys())
+    for m in all_members:
+        combined_ids.add(str(m))
+
+    if not combined_ids:
+        await query.edit_message_text(
+            "📋 <b>Daftar Saldo Member (0)</b>\n\nBelum ada member terdaftar.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='menu_resellers')]])
+        )
+        return SELECTING_ACTION
+
+    sorted_ids = sorted(list(combined_ids), key=lambda x: resellers_data.get(x, {}).get('balance', 0), reverse=True)
+    header = f"📋 <b>Daftar Saldo Member ({len(sorted_ids)})</b>\n\n"
+
+    chunks = []
+    current_msg = header
+
+    for r_id in sorted_ids:
+        user_data = resellers_data.get(r_id, {})
+        balance = user_data.get('balance', 0)
+        role_type = user_data.get('role', 'member')
+
+        if is_admin(r_id):
+            role_label = "👑 Admin"
+        elif role_type == 'reseller':
+            role_label = "👑 Reseller"
+        else:
+            role_label = "👤 Member"
+
+        u_info = users_info.get(r_id, {})
+        name = u_info.get("name")
+        username = u_info.get("username")
+
+        if not name or not username:
             try:
                 chat = await context.bot.get_chat(chat_id=r_id)
-                name = html.escape(chat.first_name)
-                user_display = f"@{chat.username}" if chat.username else ""
-                msg += f"{role_tag} | <b>{name}</b> {user_display}\n🆔 <code>{r_id}</code> | 💰 {balance}\n━━━━━━━━━━━━\n"
-            except:
-                msg += f"{role_tag} | ID {r_id}\n💰 {balance}\n━━━━━━━━━━━━\n"
-            await asyncio.sleep(0.05)
-    if len(msg) > 4000: msg = msg[:4000] + "\n...terpotong"
-    await query.edit_message_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='menu_resellers')]]))
+                first = chat.first_name or ""
+                last = f" {chat.last_name}" if chat.last_name else ""
+                name = f"{first}{last}".strip() or f"User {r_id}"
+                username = f"@{chat.username}" if chat.username else "(No Username)"
+                users_info[r_id] = {"name": name, "username": username}
+                save_json(USER_INFO_DB, users_info)
+            except Exception:
+                name = name or f"User {r_id}"
+                username = username or "(No Username)"
+
+        block = (
+            f"{role_label} | {html.escape(name)}\n"
+            f"🆔 <code>{r_id}</code>\n"
+            f"👤 {html.escape(username)}\n"
+            f"💰 {format_rupiah(balance)}\n"
+            f"━━━━━━━━━━━━\n"
+        )
+
+        if len(current_msg) + len(block) > 3800:
+            chunks.append(current_msg)
+            current_msg = block
+        else:
+            current_msg += block
+
+    if current_msg:
+        chunks.append(current_msg)
+
+    if len(chunks) == 1:
+        await query.edit_message_text(
+            chunks[0],
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='menu_resellers')]])
+        )
+    else:
+        await query.edit_message_text(chunks[0], parse_mode=ParseMode.HTML)
+        for chunk in chunks[1:-1]:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=chunk, parse_mode=ParseMode.HTML)
+            await asyncio.sleep(0.1)
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=chunks[-1],
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='menu_resellers')]])
+        )
+
     return SELECTING_ACTION
 
 async def start_add_reseller(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -979,6 +1097,62 @@ async def set_admin_contact_input(update: Update, context: ContextTypes.DEFAULT_
     )
     return SELECTING_ACTION
 
+async def start_set_store_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(update.effective_user.id):
+        await query.message.reply_text("⛔ Hanya admin!")
+        return SELECTING_ACTION
+    curr = get_store_name()
+    await query.edit_message_text(
+        f"🏪 <b>Set Nama Store</b>\n\nNama store saat ini: <code>{html.escape(curr)}</code>\n\nMasukkan Nama Store baru:",
+        parse_mode=ParseMode.HTML
+    )
+    return SET_STORE_NAME_INPUT
+
+async def set_store_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return SELECTING_ACTION
+    name = update.message.text.strip()
+    if not name:
+        await update.message.reply_text("❌ Nama Store tidak boleh kosong!")
+        return SET_STORE_NAME_INPUT
+    set_store_name(name)
+    await update.message.reply_text(
+        f"✅ Nama Store berhasil diubah menjadi: <code>{html.escape(name)}</code>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu Reseller", callback_data='menu_resellers')]])
+    )
+    return SELECTING_ACTION
+
+async def start_set_managed_by(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(update.effective_user.id):
+        await query.message.reply_text("⛔ Hanya admin!")
+        return SELECTING_ACTION
+    curr = get_managed_by()
+    await query.edit_message_text(
+        f"👤 <b>Set Dikelola Oleh</b>\n\nPengelola saat ini: <code>{html.escape(curr)}</code>\n\nMasukkan nama pengelola baru (contoh: <code>Deki_niswara</code>):",
+        parse_mode=ParseMode.HTML
+    )
+    return SET_MANAGED_BY_INPUT
+
+async def set_managed_by_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return SELECTING_ACTION
+    managed = update.message.text.strip()
+    if not managed:
+        await update.message.reply_text("❌ Nama pengelola tidak boleh kosong!")
+        return SET_MANAGED_BY_INPUT
+    set_managed_by(managed)
+    await update.message.reply_text(
+        f"✅ Dikelola oleh berhasil diubah menjadi: <code>{html.escape(managed)}</code>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu Reseller", callback_data='menu_resellers')]])
+    )
+    return SELECTING_ACTION
+
 async def start_set_qris(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1084,18 +1258,76 @@ async def action_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("⏳ <b>Membuat backup...</b>", parse_mode=ParseMode.HTML)
         zip_path = f"{DIR_PATH}/backup_upcloud_{int(time.time())}.zip"
         with zipfile.ZipFile(zip_path, 'w') as zf:
-            for fp in [STOCK_FILE, RESELLER_DB, MEMBER_DB, SETTINGS_DB, INCOME_DB, SOLD_DB, ADMIN_DB]:
+            for fp in [STOCK_FILE, RESELLER_DB, MEMBER_DB, SETTINGS_DB, INCOME_DB, SOLD_DB, ADMIN_DB, USER_INFO_DB, TRX_COUNTER_FILE]:
                 if os.path.exists(fp):
                     zf.write(fp, os.path.basename(fp))
             qris_file = get_qris_image_path()
             if qris_file and os.path.exists(qris_file):
                 zf.write(qris_file, os.path.basename(qris_file))
-        await context.bot.send_document(chat_id=update.effective_chat.id, document=open(zip_path, 'rb'), filename=os.path.basename(zip_path), caption=f"💾 Backup UpCloud - {get_indo_date()} {get_time_wib()}\nStok: {get_stock_count()} akun")
+        await context.bot.send_document(
+            chat_id=update.effective_chat.id,
+            document=open(zip_path, 'rb'),
+            filename=os.path.basename(zip_path),
+            caption=f"💾 <b>Backup Data Bot</b> - {get_indo_date()} {get_time_wib()}\n📦 Stok: {get_stock_count()} akun",
+            parse_mode=ParseMode.HTML
+        )
         os.remove(zip_path)
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ Backup selesai!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu", callback_data='menu_back_new')]]))
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="✅ Backup selesai! Gunakan file .zip ini jika ingin melakukan Restore.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📥 Restore Data", callback_data='menu_restore')],
+                [InlineKeyboardButton("🔙 Menu Utama", callback_data='menu_back_new')]
+            ])
+        )
     except Exception as e:
         await query.message.reply_text(f"❌ Gagal backup: {e}")
     return SELECTING_ACTION
+
+async def start_restore(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(update.effective_user.id):
+        await query.message.reply_text("⛔ Hanya admin!")
+        return SELECTING_ACTION
+    await query.edit_message_text(
+        "📥 <b>Restore Database Backup</b>\n\n"
+        "Silakan kirimkan file <code>.zip</code> backup data bot ke percakapan ini.",
+        parse_mode=ParseMode.HTML
+    )
+    return RESTORE_DB_INPUT
+
+async def process_restore(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return SELECTING_ACTION
+    doc = update.message.document
+    if not doc or not doc.file_name.endswith('.zip'):
+        await update.message.reply_text("❌ Mohon kirimkan file cadangan berformat <code>.zip</code>!", parse_mode=ParseMode.HTML)
+        return RESTORE_DB_INPUT
+
+    try:
+        await update.message.reply_text("⏳ Sedang memproses restore data...")
+        file = await doc.get_file()
+        temp_zip = f"/tmp/restore_{int(time.time())}.zip"
+        await file.download_to_drive(temp_zip)
+
+        with zipfile.ZipFile(temp_zip, 'r') as zf:
+            zf.extractall(DIR_PATH)
+
+        if os.path.exists(temp_zip):
+            os.remove(temp_zip)
+
+        await update.message.reply_text(
+            "✅ <b>Restore Berhasil!</b>\n\n"
+            "Semua data database, saldo member, stok, dan pengaturan telah berhasil dipulihkan.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu Utama", callback_data='menu_back_new')]])
+        )
+        return SELECTING_ACTION
+    except Exception as e:
+        logger.error(f"Error during restore: {e}")
+        await update.message.reply_text(f"❌ Gagal melakukan restore data: {e}")
+        return SELECTING_ACTION
 
 # --- Navigation ---
 async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE): return await start(update, context)
@@ -1153,9 +1385,12 @@ def main():
                     CallbackQueryHandler(admin_add_start, pattern='^admin_add$'),
                     CallbackQueryHandler(start_set_qris, pattern='^menu_set_qris$'),
                     CallbackQueryHandler(start_set_admin_contact, pattern='^menu_set_contact$'),
+                    CallbackQueryHandler(start_set_store_name, pattern='^menu_set_store_name$'),
+                    CallbackQueryHandler(start_set_managed_by, pattern='^menu_set_managed_by$'),
                     CallbackQueryHandler(start_broadcast, pattern='^menu_broadcast$'),
                     CallbackQueryHandler(action_income_report, pattern='^menu_income$'),
                     CallbackQueryHandler(action_backup, pattern='^menu_backup$'),
+                    CallbackQueryHandler(start_restore, pattern='^menu_restore$'),
                     CallbackQueryHandler(back_to_main, pattern='^menu_back$'),
                     CallbackQueryHandler(back_to_main_new, pattern='^menu_back_new$')
                 ],
@@ -1168,6 +1403,9 @@ def main():
                 DEL_RESELLER: [MessageHandler(filters.TEXT & ~filters.COMMAND, del_reseller_input)],
                 ADD_ADMIN_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_admin_input)],
                 SET_ADMIN_CONTACT_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_admin_contact_input)],
+                SET_STORE_NAME_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_store_name_input)],
+                SET_MANAGED_BY_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_managed_by_input)],
+                RESTORE_DB_INPUT: [MessageHandler(filters.Document.ALL & ~filters.COMMAND, process_restore)],
                 SET_QRIS_INPUT: [MessageHandler((filters.PHOTO | filters.Document.IMAGE | filters.TEXT) & ~filters.COMMAND, set_qris_photo_input)],
                 BROADCAST_MSG: [MessageHandler(filters.ALL & ~filters.COMMAND, process_broadcast)],
             },
