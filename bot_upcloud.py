@@ -440,12 +440,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE, force_new=Fa
         if created_at >= start_of_day: stat_daily += 1
         if created_at >= start_of_week: stat_weekly += 1
 
+    admin_contact = get_admin_contact() or "@Admin"
+    admin_display = admin_contact if admin_contact.startswith("@") else (f"@{admin_contact.split('/')[-1]}" if "t.me/" in admin_contact else admin_contact)
+
     text = (
         f"📦━━━━━━━━━━━━━━━━━━━📦\n"
         f"      ✨ <b>UPCLOUD STORE</b> ✨\n"
         f"📦━━━━━━━━━━━━━━━━━━━📦\n\n"
         f"selamat datang di UPCloud Auto Store 💎\n"
-        f"jual akun upcloud format <code>ucat_...</code> otomatis 🚀\n\n"
+        f"nikmati pengalaman membeli akun upcloud tercepat, aman, dan otomatis 🚀\n\n"
         f"🧭 <b>informasi akun</b>\n"
         f"┏━━━━━━━━━━━━━━━━━━━━━┓\n"
         f"┃ 💰 saldo: {saldo}\n"
@@ -471,10 +474,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE, force_new=Fa
         f"┏━━━━━━━━━━━━━━━━━━━━━┓\n"
         f"┃ 🧭 waktu: {waktu_skr}\n"
         f"┃ 📅 tanggal: {tanggal_skr}\n"
-        f"┃ 🖥️ stok ready: {total_stock}\n"
+        f"┃ 🖥️ status: online | 👥 user: {len(load_json(MEMBER_DB, []))}\n"
         f"┗━━━━━━━━━━━━━━━━━━━━━┛\n\n"
+        f"☎️ <b>hubungi admin</b>\n"
+        f"╰📨 {admin_display}\n\n"
         f"📦━━━━━━━━━━━━━━━━━━━📦\n"
-        f"     🌐 dikelola oleh Admin\n"
+        f"     🌐 dikelola oleh <i>{html.escape(admin_display)}</i>\n"
         f"📦━━━━━━━━━━━━━━━━━━━📦"
     )
 
