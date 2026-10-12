@@ -1,13 +1,11 @@
 #!/bin/bash
-# install.sh - UPCLOUD STORE BOT - AUTO DOWNLOAD FROM CODEHUB
-# Link bot lu: https://codehub.vigilante.biz.id/raw/xxxxx
-# 1 FILE INSTALLER - auto download bot_upcloud.py + qris.jpg + stok.txt
+# install.sh - UPCLOUD STORE BOT - AUTO DOWNLOAD FROM GITHUB REPO
+# Link repo: https://github.com/Nizwarax/Upcloud
 
-BOT_URL="https://codehub.vigilante.biz.id/raw/upcloud/bot_upcloud.py"
-QRIS_URL="https://codehub.vigilante.biz.id/raw/upcloud/qris.jpg"  
-# GANTI DENGAN LINK RAW QRIS LU DI CODEHUB
+BOT_URL="https://raw.githubusercontent.com/Nizwarax/Upcloud/main/bot_upcloud.py"
+QRIS_URL="https://raw.githubusercontent.com/Nizwarax/Upcloud/main/qris.png"
 
-echo -e "\033[1;33mInstalling UPCLOUD STORE Bot (ZIVPN Style)...\033[0m"
+echo -e "\033[1;33mInstalling UPCLOUD STORE Bot...\033[0m"
 echo -e "Downloading bot from: $BOT_URL"
 echo -e "QRIS from: $QRIS_URL"
 
@@ -57,32 +55,30 @@ fi
 chmod +x /usr/local/bin/upcloud_bot.py
 echo -e "\033[1;32m✅ Bot downloaded!\033[0m"
 
-# === AUTO DOWNLOAD QRIS DARI CODEHUB ===
-echo "Downloading QRIS to /etc/upcloud/qris.jpg..."
-if [[ "$QRIS_URL" != *"GANTI"* && "$QRIS_URL" != *"QRIS_ID_LU"* && "$QRIS_URL" != "" ]]; then
-    echo "QRIS URL: $QRIS_URL"
-    if command -v curl &> /dev/null; then
-        curl -sSL "$QRIS_URL" -o /etc/upcloud/qris.jpg
-    else
-        wget -qO /etc/upcloud/qris.jpg "$QRIS_URL"
-    fi
-    if [ -s /etc/upcloud/qris.jpg ]; then
-        echo -e "\033[1;32m✅ qris.jpg downloaded dari CodeHub!\033[0m"
-    else
-        echo -e "\033[1;31m❌ Gagal download QRIS dari $QRIS_URL\033[0m"
-        echo "Upload manual nanti ke /etc/upcloud/qris.jpg"
-    fi
+# === AUTO DOWNLOAD QRIS DARI GITHUB ===
+echo "Downloading QRIS image..."
+if command -v curl &> /dev/null; then
+    curl -sSL "$QRIS_URL" -o /etc/upcloud/qris.png
+    curl -sSL "$QRIS_URL" -o /etc/upcloud/qris.jpg
 else
-    # Fallback kalau QRIS_URL belum diganti, cek file lokal
-    if [ -f "qris.jpg" ]; then
+    wget -qO /etc/upcloud/qris.png "$QRIS_URL"
+    wget -qO /etc/upcloud/qris.jpg "$QRIS_URL"
+fi
+
+if [ -s /etc/upcloud/qris.png ] || [ -s /etc/upcloud/qris.jpg ]; then
+    echo -e "\033[1;32m✅ qris image downloaded dari GitHub!\033[0m"
+else
+    echo -e "\033[1;31m❌ Gagal download QRIS dari $QRIS_URL\033[0m"
+    if [ -f "qris.png" ]; then
+        cp qris.png /etc/upcloud/qris.png
+        cp qris.png /etc/upcloud/qris.jpg
+        echo "✅ qris.png copied dari lokal"
+    elif [ -f "qris.jpg" ]; then
+        cp qris.jpg /etc/upcloud/qris.png
         cp qris.jpg /etc/upcloud/qris.jpg
         echo "✅ qris.jpg copied dari lokal"
-    elif [ -f "QRIS.jpg" ]; then
-        cp QRIS.jpg /etc/upcloud/qris.jpg
-        echo "✅ QRIS.jpg copied dari lokal"
     else
-        echo -e "\033[1;33m⚠️ QRIS_URL belum diganti, upload manual ke /etc/upcloud/qris.jpg\033[0m"
-        echo -e "\033[1;33mAtau ganti QRIS_URL di install.sh dengan link raw QRIS lu\033[0m"
+        echo -e "\033[1;33m⚠️ Foto QRIS belum ada. Anda bisa set via menu admin di bot atau upload ke /etc/upcloud/qris.png\033[0m"
     fi
 fi
 
@@ -125,7 +121,7 @@ fi
 echo "Creating systemd service..."
 cat > /etc/systemd/system/upcloud-bot.service <<EOF
 [Unit]
-Description=UPCLOUD STORE Telegram Bot (ZIVPN Style)
+Description=UPCLOUD STORE Telegram Bot
 After=network.target
 
 [Service]
@@ -158,21 +154,18 @@ echo "--- Service Logs (last 20 lines) ---"
 journalctl -u upcloud-bot --no-pager -n 20
 echo "------------------------------------"
 
-echo -e "\033[1;32mINSTALL SELESAI! Full auto dari CodeHub\033[0m"
+echo -e "\033[1;32mINSTALL SELESAI! Direct from GitHub (Nizwarax/Upcloud)\033[0m"
 echo ""
 echo -e "\033[1;33m=== PENTING ===\033[0m"
 echo "📁 Folder data: /etc/upcloud/"
 echo "📦 Stok: /etc/upcloud/stok.txt (edit: nano /etc/upcloud/stok.txt)"
 echo "🔑 Bot: /usr/local/bin/upcloud_bot.py"
-echo "🖼️ QRIS: /etc/upcloud/qris.jpg"
+echo "🖼️ QRIS: /etc/upcloud/qris.png"
 echo "⚙️ Config: /etc/upcloud/bot_config.sh"
 echo "💾 Saldo: /etc/upcloud/resellers.json"
 echo "📝 Log jual: /etc/upcloud/sold_log.json"
 echo ""
-echo -e "\033[1;33mPerintah:\033[0m"
+echo -e "\033[1;33mPerintah Service:\033[0m"
 echo "systemctl status upcloud-bot - cek status"
 echo "systemctl restart upcloud-bot - restart bot"
-echo "journalctl -u upcloud-bot -f - liat log live"
-echo ""
-echo -e "\033[1;33mNOTE:\033[0m Untuk ganti link CodeHub, edit BOT_URL & QRIS_URL di install.sh"
-echo -e "\033[1;33mNOTE:\033[0m Upload qris.jpg manual: cp qris.jpg /etc/upcloud/qris.jpg && systemctl restart upcloud-bot"
+echo "journalctl -u upcloud-bot -f - lihat log live"
