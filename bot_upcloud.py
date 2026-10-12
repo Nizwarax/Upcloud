@@ -92,7 +92,8 @@ logger = logging.getLogger(__name__)
     BUY_CONFIRM,
     SET_QRIS_INPUT,
     ADD_ADMIN_INPUT,
-) = range(12)
+    SET_ADMIN_CONTACT_INPUT,
+) = range(13)
 
 # --- Helper Functions ---
 
@@ -208,6 +209,21 @@ def get_reseller_price():
     data = load_json(SETTINGS_DB, {})
     if not isinstance(data, dict): return 10000
     return data.get("reseller_price", 10000)
+
+def get_admin_contact():
+    data = load_json(SETTINGS_DB, {})
+    if isinstance(data, dict) and data.get("admin_contact"):
+        return data["admin_contact"]
+    contact = get_config_value("ADMIN_CONTACT")
+    if contact:
+        return contact
+    return None
+
+def set_admin_contact(contact):
+    data = load_json(SETTINGS_DB, {})
+    if not isinstance(data, dict): data = {}
+    data["admin_contact"] = contact.strip()
+    save_json(SETTINGS_DB, data)
 
 def set_account_price(price):
     data = load_json(SETTINGS_DB, {})
@@ -593,6 +609,9 @@ async def action_topup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     price_member = format_rupiah(get_account_price())
     price_reseller = format_rupiah(get_reseller_price())
     qris_path = get_qris_image_path()
+    admin_contact = get_admin_contact()
+
+    contact_info = f"📩 <b>Kontak Admin:</b> {admin_contact}\n\n" if admin_contact else ""
 
     text = (
         f"💳 <b>TOPUP SALDO</b>\n\n"
@@ -605,9 +624,15 @@ async def action_topup(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"3. Admin akan mengisikan saldo kamu\n\n"
         f"🆔 ID Telegram kamu: <code>{update.effective_user.id}</code>\n"
         f"💰 Saldo saat ini: <b>{format_rupiah(get_reseller_balance(update.effective_user.id))}</b>\n\n"
-        f"💬 Hubungi Admin untuk konfirmasi."
+        f"{contact_info}"
+        f"💬 Hubungi Admin setelah melakukan pembayaran."
     )
-    keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data='menu_back')]]
+
+    keyboard = []
+    if admin_contact:
+        url = admin_contact if admin_contact.startswith("http") else f"https://t.me/{admin_contact.replace('@', '')}"
+        keyboard.append([InlineKeyboardButton("📩 Hubungi Admin", url=url)])
+    keyboard.append([InlineKeyboardButton("🔙 Kembali", callback_data='menu_back')])
 
     if qris_path and os.path.exists(qris_path):
         try:
@@ -749,9 +774,11 @@ async def reseller_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await query.message.reply_text("⛔ Hanya admin!")
         return SELECTING_ACTION
+    admin_contact = get_admin_contact() or "Belum diset"
     text = (
         "👥 <b>MANAGE RESELLERS & SALDO</b>\n\n"
-        "Kelola member, reseller, saldo, harga akun, dan QRIS."
+        f"📩 Kontak Admin Saat Ini: <code>{admin_contact}</code>\n"
+        "Kelola member, reseller, saldo, harga akun, QRIS, dan kontak admin."
     )
     buttons = [
         [InlineKeyboardButton("➕ Tambah Reseller", callback_data='reseller_add'), InlineKeyboardButton("➖ Hapus Reseller", callback_data='reseller_del')],
@@ -759,7 +786,7 @@ async def reseller_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("💰 Isi Saldo Member", callback_data='reseller_balance_add')],
         [InlineKeyboardButton("🏷️ Set Harga Member", callback_data='reseller_set_price'), InlineKeyboardButton("🏷️ Set Harga Reseller", callback_data='reseller_set_reseller_price')],
         [InlineKeyboardButton("👑 Daftar Admin", callback_data='admin_list'), InlineKeyboardButton("➕ Tambah Admin", callback_data='admin_add')],
-        [InlineKeyboardButton("🖼️ Set Foto QRIS", callback_data='menu_set_qris')],
+        [InlineKeyboardButton("🖼️ Set Foto QRIS", callback_data='menu_set_qris'), InlineKeyboardButton("💬 Set Kontak Admin", callback_data='menu_set_contact')],
         [InlineKeyboardButton("🔙 Menu Utama", callback_data='menu_back')]
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
@@ -917,6 +944,34 @@ async def add_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         resellers[a_id] = {"balance": 0, "role": "admin"}
     save_resellers_data(resellers)
     await update.message.reply_text(f"✅ Admin baru <code>{a_id}</code> berhasil ditambahkan!", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu Reseller", callback_data='menu_resellers')]]))
+    return SELECTING_ACTION
+
+async def start_set_admin_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(update.effective_user.id):
+        await query.message.reply_text("⛔ Hanya admin!")
+        return SELECTING_ACTION
+    await query.edit_message_text(
+        "💬 <b>Set Kontak / Username Admin</b>\n\n"
+        "Masukkan username Telegram admin (contoh: <code>@username_kamu</code> atau link <code>https://t.me/username_kamu</code>):",
+        parse_mode=ParseMode.HTML
+    )
+    return SET_ADMIN_CONTACT_INPUT
+
+async def set_admin_contact_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return SELECTING_ACTION
+    contact = update.message.text.strip()
+    if not contact:
+        await update.message.reply_text("❌ Kontak admin tidak boleh kosong!")
+        return SET_ADMIN_CONTACT_INPUT
+    set_admin_contact(contact)
+    await update.message.reply_text(
+        f"✅ Kontak Admin berhasil diperbarui menjadi: <code>{html.escape(contact)}</code>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu Reseller", callback_data='menu_resellers')]])
+    )
     return SELECTING_ACTION
 
 async def start_set_qris(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1092,6 +1147,7 @@ def main():
                     CallbackQueryHandler(admin_list_action, pattern='^admin_list$'),
                     CallbackQueryHandler(admin_add_start, pattern='^admin_add$'),
                     CallbackQueryHandler(start_set_qris, pattern='^menu_set_qris$'),
+                    CallbackQueryHandler(start_set_admin_contact, pattern='^menu_set_contact$'),
                     CallbackQueryHandler(start_broadcast, pattern='^menu_broadcast$'),
                     CallbackQueryHandler(action_income_report, pattern='^menu_income$'),
                     CallbackQueryHandler(action_backup, pattern='^menu_backup$'),
@@ -1106,6 +1162,7 @@ def main():
                 ADD_RESELLER: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_reseller_input)],
                 DEL_RESELLER: [MessageHandler(filters.TEXT & ~filters.COMMAND, del_reseller_input)],
                 ADD_ADMIN_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_admin_input)],
+                SET_ADMIN_CONTACT_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_admin_contact_input)],
                 SET_QRIS_INPUT: [MessageHandler((filters.PHOTO | filters.Document.IMAGE | filters.TEXT) & ~filters.COMMAND, set_qris_photo_input)],
                 BROADCAST_MSG: [MessageHandler(filters.ALL & ~filters.COMMAND, process_broadcast)],
             },
