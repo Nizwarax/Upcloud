@@ -531,7 +531,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE, force_new=Fa
     )
 
     buttons = [
-        [InlineKeyboardButton(f"🛒 Beli Akun", callback_data='menu_buy'), InlineKeyboardButton("📦 Cek Stok", callback_data='menu_stock')],
+        [InlineKeyboardButton(f"🛒 Beli Akun ({total_stock})", callback_data='menu_buy'), InlineKeyboardButton("📦 Cek Stok", callback_data='menu_stock')],
         [InlineKeyboardButton("💳 Topup Saldo", callback_data='menu_topup'), InlineKeyboardButton("📊 Riwayat Beli", callback_data='menu_my_history')],
     ]
     if is_admin(user_id):
