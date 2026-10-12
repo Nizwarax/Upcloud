@@ -24,12 +24,10 @@ from telegram.ext import (
 )
 from telegram.error import InvalidToken
 
-# --- Global Configuration & Paths (mirip ZIVPN) ---
-# Coba pakai /etc/upcloud, kalau gak bisa tulis pakai folder lokal
+# --- Global Configuration & Paths ---
 DIR_PATH = "/etc/upcloud"
 try:
     os.makedirs(DIR_PATH, exist_ok=True)
-    # test write
     with open(os.path.join(DIR_PATH, ".test"), "w") as f:
         f.write("test")
     os.remove(os.path.join(DIR_PATH, ".test"))
@@ -41,12 +39,32 @@ STOCK_FILE = f"{DIR_PATH}/stok.txt"
 RESELLER_DB = f"{DIR_PATH}/resellers.json"
 MEMBER_DB = f"{DIR_PATH}/all_members.json"
 SETTINGS_DB = f"{DIR_PATH}/settings.json"
-QRIS_IMAGE = f"{DIR_PATH}/qris.jpg"
 INCOME_DB = f"{DIR_PATH}/income_log.json"
 TRX_COUNTER_FILE = f"{DIR_PATH}/transaction_counter.txt"
 BOT_CONFIG = f"{DIR_PATH}/bot_config.sh"
 SOLD_DB = f"{DIR_PATH}/sold_log.json"
-ADMIN_DB = f"{DIR_PATH}/admins.json"  # untuk multi admin
+ADMIN_DB = f"{DIR_PATH}/admins.json"
+
+# --- Helper to locate QRIS image ---
+def get_qris_image_path():
+    possible_paths = [
+        os.path.join(DIR_PATH, "qris.png"),
+        os.path.join(DIR_PATH, "qris.jpg"),
+        os.path.join(DIR_PATH, "qris.jpeg"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "qris.png"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "qris.jpg"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "qris.jpeg"),
+        "/etc/upcloud/qris.png",
+        "/etc/upcloud/qris.jpg",
+        "/etc/upcloud/qris.jpeg",
+        "qris.png",
+        "qris.jpg",
+        "qris.jpeg"
+    ]
+    for path in possible_paths:
+        if os.path.exists(path) and os.path.getsize(path) > 0:
+            return path
+    return None
 
 # --- Backup Script ---
 BACKUP_SCRIPT_PATH = "/usr/local/bin/upcloud-autobackup.sh"
@@ -71,14 +89,15 @@ logger = logging.getLogger(__name__)
     ADD_RESELLER,
     DEL_RESELLER,
     BROADCAST_MSG,
-    BUY_CONFIRM
-) = range(9)
+    BUY_CONFIRM,
+    SET_QRIS_INPUT,
+    ADD_ADMIN_INPUT,
+) = range(12)
 
-# --- Helper Functions (ala ZIVPN) ---
+# --- Helper Functions ---
 
 def get_config_value(key):
     if not os.path.exists(BOT_CONFIG): 
-        # fallback ke .env
         if key == "BOT_TOKEN":
             return os.getenv("BOT_TOKEN")
         if key == "CHAT_ID":
@@ -143,16 +162,13 @@ def check_is_reseller(user_id):
     return user_data.get("role") == "reseller"
 
 def load_admins():
-    # multi admin support
     admins = set()
-    # dari bot_config CHAT_ID bisa comma separated
     chat_id_raw = get_config_value("CHAT_ID") or ""
     if chat_id_raw:
         for cid in chat_id_raw.split(","):
             cid = cid.strip()
             if cid.isdigit():
                 admins.add(cid)
-    # dari admins.json
     if os.path.exists(ADMIN_DB):
         try:
             with open(ADMIN_DB, 'r') as f:
@@ -160,10 +176,9 @@ def load_admins():
                 for a in data:
                     admins.add(str(a))
         except: pass
-    # dari resellers yang role admin
     resellers = load_resellers_data()
     for uid, info in resellers.items():
-        if info.get("role") == "admin":
+        if isinstance(info, dict) and info.get("role") == "admin":
             admins.add(str(uid))
     return admins
 
@@ -200,7 +215,7 @@ def set_account_price(price):
     data["account_price"] = int(price)
     save_json(SETTINGS_DB, data)
 
-# --- STOK UPCLOUD (INTI FITUR) ---
+# --- STOK UPCLOUD ---
 def load_stock():
     if not os.path.exists(STOCK_FILE):
         open(STOCK_FILE, 'w').close()
@@ -225,13 +240,11 @@ def pop_stock():
 
 def add_stock_baru(list_akun: list):
     stok = load_stock()
-    # filter hanya yang format ucat_ atau semua baris valid
     baru = []
     for a in list_akun:
         a = a.strip()
         if not a: continue
         if a in stok: continue
-        # validasi format ucat_
         if a.startswith("ucat_") or len(a) > 10:
             baru.append(a)
     stok.extend(baru)
@@ -276,16 +289,6 @@ def get_public_ip():
 
 def get_domain():
     return get_public_ip()
-
-def get_geo_info():
-    try:
-        response = subprocess.getoutput("curl -s http://ip-api.com/json")
-        data = json.loads(response)
-        country_code = data.get('countryCode', 'ID')
-        flags = {'ID': '🇮🇩', 'SG': '🇸🇬', 'MY': '🇲🇾', 'US': '🇺🇸'}
-        return f"{country_code}-SERVER {flags.get(country_code, '🏳️')}"
-    except:
-        return "ID-SERVER 🇮🇩"
 
 def mask_string(text):
     if not text or text == "-": return "-"
@@ -473,11 +476,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE, force_new=Fa
     if update.callback_query:
         await update.callback_query.answer()
         if force_new:
+            try:
+                await update.callback_query.delete_message()
+            except Exception:
+                pass
             await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
         else:
             try:
                 await update.callback_query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-            except:
+            except Exception:
+                try:
+                    await update.callback_query.delete_message()
+                except Exception:
+                    pass
                 await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
@@ -507,7 +518,6 @@ async def action_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ <b>Stok Habis!</b>\nTidak bisa membeli saat ini.", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Kembali", callback_data='menu_back')]]))
         return SELECTING_ACTION
 
-    # harga berdasarkan role
     if is_admin(user_id):
         price = 0
         role = "Admin"
@@ -528,13 +538,11 @@ async def action_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return SELECTING_ACTION
 
-    # Proses ambil stok
     akun = pop_stock()
     if not akun:
         await query.edit_message_text("❌ Gagal ambil stok, coba lagi.", parse_mode=ParseMode.HTML)
         return SELECTING_ACTION
 
-    # potong saldo jika bukan admin
     if not is_admin(user_id):
         update_reseller_balance(user_id, -price)
         record_income(user_id, update.effective_user.username or "-", price, f"Beli {akun}")
@@ -545,7 +553,6 @@ async def action_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data_log = {"id": user_id, "username": update.effective_user.username or "-" }
     await send_log_to_channel(context, user_data_log, akun, price, role, remaining)
 
-    # Kirim ke pembeli
     text = (
         f"✅ <b>PEMBELIAN BERHASIL!</b>\n\n"
         f"🔑 Akun UpCloud kamu:\n<code>{html.escape(akun)}</code>\n\n"
@@ -559,7 +566,6 @@ async def action_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("🛒 Beli Lagi", callback_data='menu_buy'), InlineKeyboardButton("🔙 Menu Utama", callback_data='menu_back_new')]]
     await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
     
-    # kirim juga sebagai pesan baru biar gampang copy
     await context.bot.send_message(chat_id=update.effective_chat.id, text=f"📋 Copy akun:\n<code>{html.escape(akun)}</code>", parse_mode=ParseMode.HTML)
 
     return SELECTING_ACTION
@@ -586,28 +592,46 @@ async def action_topup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     price_member = format_rupiah(get_account_price())
     price_reseller = format_rupiah(get_reseller_price())
+    qris_path = get_qris_image_path()
+
     text = (
         f"💳 <b>TOPUP SALDO</b>\n\n"
-        f"Harga akun:\n"
-        f"• Member: {price_member}/akun\n"
-        f"• Reseller: {price_reseller}/akun\n\n"
-        f"Cara Topup:\n"
-        f"1. Transfer ke QRIS di bawah\n"
-        f"2. Kirim bukti transfer ke admin\n"
-        f"3. Admin akan isi saldo kamu\n\n"
-        f"ID kamu: <code>{update.effective_user.id}</code>\n"
-        f"Saldo: {format_rupiah(get_reseller_balance(update.effective_user.id))}\n\n"
-        f"Hubungi admin: @Admin\n"
+        f"🏷️ <b>Harga akun:</b>\n"
+        f"• Member: {price_member} / akun\n"
+        f"• Reseller: {price_reseller} / akun\n\n"
+        f"📌 <b>Cara Topup:</b>\n"
+        f"1. Scan / Transfer via QRIS di atas\n"
+        f"2. Kirim bukti transfer ke Admin\n"
+        f"3. Admin akan mengisikan saldo kamu\n\n"
+        f"🆔 ID Telegram kamu: <code>{update.effective_user.id}</code>\n"
+        f"💰 Saldo saat ini: <b>{format_rupiah(get_reseller_balance(update.effective_user.id))}</b>\n\n"
+        f"💬 Hubungi Admin untuk konfirmasi."
     )
     keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data='menu_back')]]
-    if os.path.exists(QRIS_IMAGE):
+
+    if qris_path and os.path.exists(qris_path):
         try:
-            await context.bot.send_photo(chat_id=update.effective_chat.id, photo=open(QRIS_IMAGE, 'rb'), caption=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
-            await query.delete_message()
-        except:
-            await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
-    else:
-        await query.edit_message_text(text + "\n\n<i>QRIS belum di set, hubungi admin</i>", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+            with open(qris_path, 'rb') as photo_file:
+                await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=photo_file,
+                    caption=text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            try:
+                await query.delete_message()
+            except Exception:
+                pass
+            return SELECTING_ACTION
+        except Exception as e:
+            logger.error(f"Gagal kirim QRIS photo: {e}")
+
+    await query.edit_message_text(
+        text + "\n\n⚠️ <i>QRIS belum diset oleh admin. Hubungi admin secara langsung.</i>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
     return SELECTING_ACTION
 
 # --- KELOLA STOK (ADMIN) ---
@@ -718,7 +742,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ File diterima!\nBerhasil tambah {added} akun\nTotal stok: {get_stock_count()}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📦 Kelola Stok", callback_data='menu_stock_manage')]]))
     return SELECTING_ACTION
 
-# --- MANAGE RESELLER (COPY DARI ZIVPN) ---
+# --- MANAGE RESELLER ---
 async def reseller_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -727,7 +751,7 @@ async def reseller_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SELECTING_ACTION
     text = (
         "👥 <b>MANAGE RESELLERS & SALDO</b>\n\n"
-        "Kelola member, reseller, saldo, dan harga akun."
+        "Kelola member, reseller, saldo, harga akun, dan QRIS."
     )
     buttons = [
         [InlineKeyboardButton("➕ Tambah Reseller", callback_data='reseller_add'), InlineKeyboardButton("➖ Hapus Reseller", callback_data='reseller_del')],
@@ -735,6 +759,7 @@ async def reseller_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("💰 Isi Saldo Member", callback_data='reseller_balance_add')],
         [InlineKeyboardButton("🏷️ Set Harga Member", callback_data='reseller_set_price'), InlineKeyboardButton("🏷️ Set Harga Reseller", callback_data='reseller_set_reseller_price')],
         [InlineKeyboardButton("👑 Daftar Admin", callback_data='admin_list'), InlineKeyboardButton("➕ Tambah Admin", callback_data='admin_add')],
+        [InlineKeyboardButton("🖼️ Set Foto QRIS", callback_data='menu_set_qris')],
         [InlineKeyboardButton("🔙 Menu Utama", callback_data='menu_back')]
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
@@ -871,10 +896,67 @@ async def admin_list_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("👑 <b>Tambah Admin Baru</b>\nMasukkan ID Telegram admin baru (bisa lebih dari 1, admin multi):", parse_mode=ParseMode.HTML)
-    return ADD_RESELLER  # reuse state but handle as admin
+    if not is_admin(update.effective_user.id):
+        await query.message.reply_text("⛔ Hanya admin!")
+        return SELECTING_ACTION
+    await query.edit_message_text("👑 <b>Tambah Admin Baru</b>\nMasukkan ID Telegram admin baru:", parse_mode=ParseMode.HTML)
+    return ADD_ADMIN_INPUT
 
-# Broadcast & Income & Backup mirip ZIVPN
+async def add_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    a_id = update.message.text.strip()
+    if not a_id.isdigit():
+        await update.message.reply_text("❌ ID Telegram harus angka!")
+        return ADD_ADMIN_INPUT
+    admins = load_admins()
+    admins.add(a_id)
+    save_admins(admins)
+    resellers = load_resellers_data()
+    if a_id in resellers:
+        resellers[a_id]["role"] = "admin"
+    else:
+        resellers[a_id] = {"balance": 0, "role": "admin"}
+    save_resellers_data(resellers)
+    await update.message.reply_text(f"✅ Admin baru <code>{a_id}</code> berhasil ditambahkan!", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu Reseller", callback_data='menu_resellers')]]))
+    return SELECTING_ACTION
+
+async def start_set_qris(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(update.effective_user.id):
+        await query.message.reply_text("⛔ Hanya admin!")
+        return SELECTING_ACTION
+    await query.edit_message_text("🖼️ <b>Set Foto QRIS</b>\n\nSilakan kirimkan Foto QRIS pembayaran baru ke bot ini.", parse_mode=ParseMode.HTML)
+    return SET_QRIS_INPUT
+
+async def set_qris_photo_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return SELECTING_ACTION
+    photo = update.message.photo[-1] if update.message.photo else None
+    doc = update.message.document
+    file = None
+    if photo:
+        file = await photo.get_file()
+    elif doc and doc.mime_type and doc.mime_type.startswith("image/"):
+        file = await doc.get_file()
+
+    if file:
+        qris_png = os.path.join(DIR_PATH, "qris.png")
+        qris_jpg = os.path.join(DIR_PATH, "qris.jpg")
+        await file.download_to_drive(qris_png)
+        await file.download_to_drive(qris_jpg)
+        try:
+            local_dir = os.path.dirname(os.path.abspath(__file__))
+            await file.download_to_drive(os.path.join(local_dir, "qris.png"))
+            await file.download_to_drive(os.path.join(local_dir, "qris.jpg"))
+        except:
+            pass
+        await update.message.reply_text("✅ Foto QRIS berhasil diperbarui!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu Reseller", callback_data='menu_resellers')]]))
+        return SELECTING_ACTION
+    else:
+        await update.message.reply_text("❌ Silakan kirimkan gambar/foto QRIS.")
+        return SET_QRIS_INPUT
+
+# --- BROADCAST & INCOME & BACKUP ---
 
 async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -945,6 +1027,9 @@ async def action_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for fp in [STOCK_FILE, RESELLER_DB, MEMBER_DB, SETTINGS_DB, INCOME_DB, SOLD_DB, ADMIN_DB]:
                 if os.path.exists(fp):
                     zf.write(fp, os.path.basename(fp))
+            qris_file = get_qris_image_path()
+            if qris_file and os.path.exists(qris_file):
+                zf.write(qris_file, os.path.basename(qris_file))
         await context.bot.send_document(chat_id=update.effective_chat.id, document=open(zip_path, 'rb'), filename=os.path.basename(zip_path), caption=f"💾 Backup UpCloud - {get_indo_date()} {get_time_wib()}\nStok: {get_stock_count()} akun")
         os.remove(zip_path)
         await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ Backup selesai!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu", callback_data='menu_back_new')]]))
@@ -956,14 +1041,13 @@ async def action_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE): return await start(update, context)
 async def back_to_main_new(update: Update, context: ContextTypes.DEFAULT_TYPE): return await start(update, context, force_new=True)
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🚫 Cancelled.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data='menu_back')]]))
+    await update.message.reply_text("🚫 Cancelled.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data='menu_back_new')]]))
     return SELECTING_ACTION
 
 # --- Main Function ---
 def main():
     try:
         token = get_config_value("BOT_TOKEN")
-        # load .env kalau ada
         try:
             from dotenv import load_dotenv
             load_dotenv()
@@ -971,7 +1055,7 @@ def main():
                 token = os.getenv("BOT_TOKEN")
         except: pass
 
-        logger.info("--- Starting UPCLOUD Bot (ZIVPN Style) ---")
+        logger.info("--- Starting UPCLOUD Bot ---")
         if not token:
             logger.critical("BOT_TOKEN missing di /etc/upcloud/bot_config.sh atau .env - Buat file dengan isi BOT_TOKEN=... dan CHAT_ID=...")
             print("❌ BOT_TOKEN belum di set! Buat file /etc/upcloud/bot_config.sh dengan:\nBOT_TOKEN=token_bot_kamu\nCHAT_ID=id_admin_kamu (bisa multi: 123,456,789)\n")
@@ -1007,6 +1091,7 @@ def main():
                     CallbackQueryHandler(start_set_reseller_price, pattern='^reseller_set_reseller_price$'),
                     CallbackQueryHandler(admin_list_action, pattern='^admin_list$'),
                     CallbackQueryHandler(admin_add_start, pattern='^admin_add$'),
+                    CallbackQueryHandler(start_set_qris, pattern='^menu_set_qris$'),
                     CallbackQueryHandler(start_broadcast, pattern='^menu_broadcast$'),
                     CallbackQueryHandler(action_income_report, pattern='^menu_income$'),
                     CallbackQueryHandler(action_backup, pattern='^menu_backup$'),
@@ -1020,6 +1105,8 @@ def main():
                 SET_RESELLER_PRICE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_reseller_price_input)],
                 ADD_RESELLER: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_reseller_input)],
                 DEL_RESELLER: [MessageHandler(filters.TEXT & ~filters.COMMAND, del_reseller_input)],
+                ADD_ADMIN_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_admin_input)],
+                SET_QRIS_INPUT: [MessageHandler((filters.PHOTO | filters.Document.IMAGE | filters.TEXT) & ~filters.COMMAND, set_qris_photo_input)],
                 BROADCAST_MSG: [MessageHandler(filters.ALL & ~filters.COMMAND, process_broadcast)],
             },
             fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start), CommandHandler("menu", start)]
