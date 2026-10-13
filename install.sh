@@ -53,7 +53,9 @@ if [ ! -s /usr/local/bin/upcloud_bot.py ]; then
 fi
 
 chmod +x /usr/local/bin/upcloud_bot.py
-echo -e "\033[1;32m✅ Bot downloaded!\033[0m"
+ln -sf /usr/local/bin/upcloud_bot.py /usr/local/bin/upc.py 2>/dev/null || true
+ln -sf /usr/local/bin/upcloud_bot.py /usr/local/bin/upc 2>/dev/null || true
+echo -e "\033[1;32m✅ Bot downloaded & executable alias (upc / upc.py) created!\033[0m"
 
 # === AUTO DOWNLOAD QRIS DARI GITHUB ===
 echo "Downloading QRIS image..."

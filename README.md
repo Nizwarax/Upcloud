@@ -79,7 +79,7 @@ sysctl -w net.ipv6.conf.all.disable_ipv6=1 2>/dev/null; sysctl -w net.ipv6.conf.
 
 | Path | Deskripsi |
 | :--- | :--- |
-| `/usr/local/bin/upcloud_bot.py` | Script utama Bot Telegram |
+| `/usr/local/bin/upcloud_bot.py` / `upc.py` / `upc` | Script utama Bot Telegram |
 | `/etc/upcloud/bot_config.sh` | Configuration token & chat ID |
 | `/etc/upcloud/stok.txt` | File stok akun UpCloud (`ucat_...`) |
 | `/etc/upcloud/qris.png` | Gambar QRIS Topup |

@@ -97,7 +97,8 @@ logger = logging.getLogger(__name__)
     SET_STORE_NAME_INPUT,
     SET_MANAGED_BY_INPUT,
     RESTORE_DB_INPUT,
-) = range(16)
+    SET_ROOT_PASS_INPUT,
+) = range(17)
 
 # --- Helper Functions ---
 
@@ -829,12 +830,23 @@ async def reseller_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_contact = get_admin_contact() or "Belum diset"
     store_name = get_store_name()
     managed_by = get_managed_by()
+
+    vps_info = ""
+    try:
+        import psutil
+        cpu_usage = psutil.cpu_percent(interval=None)
+        ram = psutil.virtual_memory()
+        vps_info = f"💻 CPU: <code>{cpu_usage}%</code> | 🧠 RAM: <code>{ram.percent}%</code>\n"
+    except Exception:
+        pass
+
     text = (
         "👥 <b>MANAGE RESELLERS & STORE</b>\n\n"
         f"🏪 Nama Store: <code>{html.escape(store_name)}</code>\n"
         f"👤 Dikelola Oleh: <code>{html.escape(managed_by)}</code>\n"
-        f"📩 Kontak Admin: <code>{html.escape(admin_contact)}</code>\n\n"
-        "Kelola member, reseller, saldo, harga akun, QRIS, dan kustomisasi store."
+        f"📩 Kontak Admin: <code>{html.escape(admin_contact)}</code>\n"
+        f"{vps_info}\n"
+        "Kelola member, reseller, saldo, harga akun, QRIS, dan sistem VPS."
     )
     buttons = [
         [InlineKeyboardButton("➕ Tambah Reseller", callback_data='reseller_add'), InlineKeyboardButton("➖ Hapus Reseller", callback_data='reseller_del')],
@@ -844,6 +856,7 @@ async def reseller_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("👑 Daftar Admin", callback_data='admin_list'), InlineKeyboardButton("➕ Tambah Admin", callback_data='admin_add')],
         [InlineKeyboardButton("🖼️ Set Foto QRIS", callback_data='menu_set_qris'), InlineKeyboardButton("💬 Set Kontak Admin", callback_data='menu_set_contact')],
         [InlineKeyboardButton("🏪 Set Nama Store", callback_data='menu_set_store_name'), InlineKeyboardButton("👤 Set Dikelola Oleh", callback_data='menu_set_managed_by')],
+        [InlineKeyboardButton("🔑 Ubah Password Root VPS", callback_data='menu_set_root_pass')],
         [InlineKeyboardButton("🔙 Menu Utama", callback_data='menu_back')]
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
@@ -1095,6 +1108,52 @@ async def set_admin_contact_input(update: Update, context: ContextTypes.DEFAULT_
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu Reseller", callback_data='menu_resellers')]])
     )
+    return SELECTING_ACTION
+
+async def start_change_root_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(update.effective_user.id):
+        await query.message.reply_text("⛔ Hanya admin!")
+        return SELECTING_ACTION
+    await query.edit_message_text(
+        "🔑 <b>Ubah Password Root VPS</b>\n\n"
+        "Silakan masukkan password baru untuk user <code>root</code> VPS ini:\n"
+        "<i>(Minimal 5 karakter, hindari karakter spasi)</i>",
+        parse_mode=ParseMode.HTML
+    )
+    return SET_ROOT_PASS_INPUT
+
+async def change_root_pass_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return SELECTING_ACTION
+    new_pass = update.message.text.strip()
+    if len(new_pass) < 5:
+        await update.message.reply_text("❌ Password terlalu pendek! Minimal 5 karakter.")
+        return SET_ROOT_PASS_INPUT
+
+    try:
+        proc = subprocess.Popen(['chpasswd'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        stdout, stderr = proc.communicate(input=f"root:{new_pass}\n")
+
+        if proc.returncode == 0:
+            await update.message.reply_text(
+                f"✅ <b>Password Root Berhasil Diubah!</b>\n\n"
+                f"🔑 Password root baru VPS: <code>{html.escape(new_pass)}</code>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu Reseller", callback_data='menu_resellers')]])
+            )
+        else:
+            await update.message.reply_text(
+                f"❌ Gagal mengubah password root: {html.escape(stderr)}",
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu Reseller", callback_data='menu_resellers')]])
+            )
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ Terjadi kesalahan: {e}",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu Reseller", callback_data='menu_resellers')]])
+        )
     return SELECTING_ACTION
 
 async def start_set_store_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1387,6 +1446,7 @@ def main():
                     CallbackQueryHandler(start_set_admin_contact, pattern='^menu_set_contact$'),
                     CallbackQueryHandler(start_set_store_name, pattern='^menu_set_store_name$'),
                     CallbackQueryHandler(start_set_managed_by, pattern='^menu_set_managed_by$'),
+                    CallbackQueryHandler(start_change_root_pass, pattern='^menu_set_root_pass$'),
                     CallbackQueryHandler(start_broadcast, pattern='^menu_broadcast$'),
                     CallbackQueryHandler(action_income_report, pattern='^menu_income$'),
                     CallbackQueryHandler(action_backup, pattern='^menu_backup$'),
@@ -1405,6 +1465,7 @@ def main():
                 SET_ADMIN_CONTACT_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_admin_contact_input)],
                 SET_STORE_NAME_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_store_name_input)],
                 SET_MANAGED_BY_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_managed_by_input)],
+                SET_ROOT_PASS_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, change_root_pass_input)],
                 RESTORE_DB_INPUT: [MessageHandler(filters.Document.ALL & ~filters.COMMAND, process_restore)],
                 SET_QRIS_INPUT: [MessageHandler((filters.PHOTO | filters.Document.IMAGE | filters.TEXT) & ~filters.COMMAND, set_qris_photo_input)],
                 BROADCAST_MSG: [MessageHandler(filters.ALL & ~filters.COMMAND, process_broadcast)],
